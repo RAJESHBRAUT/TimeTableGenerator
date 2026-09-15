@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Timetable Master App Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f4f7f6; padding: 30px; }
+        .box { max-width: 600px; margin: auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; }
+        input[type="file"] { width: 100%; padding: 10px; border: 2px solid #0066cc; border-radius: 4px; margin: 15px 0; }
+        button { background: #28a745; color: white; border: none; padding: 12px; width: 100%; font-size: 15px; font-weight: bold; border-radius: 4px; cursor: pointer; display: none; }
+        #msg { font-weight: bold; color: #0066cc; margin: 10px 0; }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h2>🛠️ Master App Generator (CSV & HTML Support)</h2>
+    <input type="file" id="files" multiple accept=".csv, .html" onchange="loadFiles(this)">
+    <div id="msg"></div>
+    <button id="btn" onclick="makeApp()">🚀 Download Master View App</button>
+</div>
+<script>
+    let data = [];
+    function loadFiles(el) {
+        let files = el.files;
+        if(!files.length) return;
+        data = []; let done = 0;
+        Array.from(files).forEach(f => {
+            let r = new FileReader();
+            r.onload = e => {
+                let content = e.target.result;
+                if(f.name.endsWith('.html') || content.trim().startsWith('<!DOCTYPE') || content.trim().startsWith('<html')) {
+                    parseHTML(content, f.name);
+                } else {
+                    parseCSV(content);
+                }
+                done++;
+                if(done === files.length) {
+                    document.getElementById('msg').innerText = files.length + " files parsed successfully!";
+                    document.getElementById('btn').style.display = 'block';
+                }
+            };
+            r.readAsText(f);
+        });
+    }
+
+    function parseCSV(txt) {
+        let lines = txt.split("\n");
+        let t = "Unknown", d = "General", s = "", y = "";
+        lines.forEach(l => {
+            let p = l.split(',');
+            if(p.length >= 2) {
+                let k = p[0].trim(), v = p[1].trim().replace(/^"(.*)"$/, '$1');
+                if(k === 'Teacher') t = v;
+                if(k === 'Department') d = v;
+                if(k === 'Semester') s = v;
+                if(k === 'Academic Year') y = v;
+            }
+        });
+        let idx = lines.findIndex(l => l.startsWith('Time Slot'));
+        if(idx === -1) return;
+        let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        for(let i = idx + 1; i < lines.length; i++) {
+            let cols = lines[i].split(',').map(c => c.trim().replace(/^"(.*)"$/, '$1'));
+            if(cols.length < 7) continue;
+            let slot = cols[0];
+            days.forEach((day, dIdx) => {
+                let val = cols[dIdx + 1];
+                if(val && val !== "- Free -") {
+                    let parts = val.split('|').map(x => x.trim());
+                    data.push({Teacher: t, Dept: d, Sem: s, Year: y, Class: parts[0]||"N/A", Room: parts[4]||"N/A", Slot: slot, Day: day, Val: val});
+                }
+            });
+        }
+    }
+
+    function parseHTML(txt, fileName) {
+        let parser = new DOMParser();
+        let doc = parser.parseFromString(txt, 'text/html');
+        let bodyText = doc.body.innerText;
+
+        let t = "Unknown", d = "General", s = "", y = "";
+        let tMatch = bodyText.match(/Faculty Name:\s*([^\n\r]+)/i) || bodyText.match(/Teacher:\s*([^\n\r]+)/i);
+        if (tMatch) t = tMatch[1].trim();
+        else t = fileName.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
+
+        let dMatch = bodyText.match(/Department of\s*([^\n\r]+)/i) || bodyText.match(/Department:\s*([^\n\r]+)/i);
+        if (dMatch) d = dMatch[1].trim();
+
+        let sMatch = bodyText.match(/Semester:\s*([^\n\r]+)/i);
+        if (sMatch) s = sMatch[1].trim();
+
+        let yMatch = bodyText.match(/Academic Year:\s*([^\n\r]+)/i);
+        if (yMatch) y = yMatch[1].trim();
+
+        let table = doc.querySelector('table');
+        if (!table) return;
+
+        let rows = table.querySelectorAll('tr');
+        let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+        for (let i = 1; i < rows.length; i++) {
+            let cols = rows[i].querySelectorAll('td, th');
+            if (cols.length < 7) continue;
+            let slot = cols[0].innerText.trim();
+            days.forEach((day, dIdx) => {
+                let val = cols[dIdx + 1] ? cols[dIdx + 1].innerText.trim() : "- Free -";
+                if (val && val !== "- Free -" && val !== "") {
+                    let parts = val.split('|').map(x => x.trim());
+                    data.push({Teacher: t, Dept: d, Sem: s, Year: y, Class: parts[0]||"N/A", Room: parts[4]||"N/A", Slot: slot, Day: day, Val: val});
+                }
+            });
+        }
+    }
+
+    function makeApp() {
+        let json = JSON.stringify(data);
+        let code = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Master View</title>
+<style>
+body { font-family: Arial, sans-serif; padding: 20px; background: #f4f7f6; }
+.box { max-width: 1200px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+.excel-dropdown { position: relative; flex: 1; min-width: 200px; }
+.excel-btn { width: 100%; padding: 10px 12px; background: #f8f9fa; border: 1px solid #0066cc; border-radius: 4px; cursor: pointer; text-align: left; font-weight: bold; font-size: 12px; color: #333; }
+.excel-btn:hover { background: #e2e6ea; }
+.excel-menu { display: none; position: absolute; top: 100%; left: 0; width: 100%; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 100; max-height: 220px; overflow-y: auto; padding: 8px; box-sizing: border-box; }
+.excel-menu input[type="text"] { width: 100%; padding: 6px; box-sizing: border-box; margin-bottom: 6px; border: 1px solid #ddd; border-radius: 3px; font-size: 11px; }
+.excel-menu label { display: block; font-size: 11px; margin-bottom: 3px; cursor: pointer; color: #333; }
+table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+th, td { border: 1px solid #ddd; padding: 6px; text-align: center; font-size: 11px; }
+th { background: #0066cc; color: white; }
+.btns { display: flex; gap: 10px; margin-top: 15px; }
+button { padding: 10px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; color: white; flex: 1; }
+.b1 { background: #17a2b8; } .b2 { background: #28a745; }
+</style>
+</head>
+<body>
+<div class="box">
+    <h2 style="text-align:center; color:#0066cc;">Master Timetable Dashboard</h2>
+    <div class="filters">
+        <div class="excel-dropdown" id="dropDept">
+            <button class="excel-btn" id="btnDept" onclick="toggleMenu('menuDept')">Department: All ▼</button>
+            <div class="excel-menu" id="menuDept"><input type="text" placeholder="Search..." oninput="filterSearch(this, 'dC')"><div id="dBox"></div></div>
+        </div>
+        <div class="excel-dropdown" id="dropTeacher">
+            <button class="excel-btn" id="btnTeacher" onclick="toggleMenu('menuTeacher')">Teacher: All ▼</button>
+            <div class="excel-menu" id="menuTeacher"><input type="text" placeholder="Search..." oninput="filterSearch(this, 'tC')"><div id="tBox"></div></div>
+        </div>
+        <div class="excel-dropdown" id="dropClass">
+            <button class="excel-btn" id="btnClass" onclick="toggleMenu('menuClass')">Class: All ▼</button>
+            <div class="excel-menu" id="menuClass"><input type="text" placeholder="Search..." oninput="filterSearch(this, 'cC')"><div id="cBox"></div></div>
+        </div>
+        <div class="excel-dropdown" id="dropRoom">
+            <button class="excel-btn" id="btnRoom" onclick="toggleMenu('menuRoom')">Room: All ▼</button>
+            <div class="excel-menu" id="menuRoom"><input type="text" placeholder="Search..." oninput="filterSearch(this, 'rC')"><div id="rBox"></div></div>
+        </div>
+        <div class="excel-dropdown" id="dropSlot">
+            <button class="excel-btn" id="btnSlot" onclick="toggleMenu('menuSlot')">Time Slot: All ▼</button>
+            <div class="excel-menu" id="menuSlot"><input type="text" placeholder="Search..." oninput="filterSearch(this, 'sC')"><div id="sBox"></div></div>
+        </div>
+    </div>
+    <table id="tbl">
+        <thead><tr><th>Dept</th><th>Teacher</th><th>Sem</th><th>Year</th><th>Class</th><th>Room</th><th>Slot</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div class="btns">
+        <button class="b1" onclick="dlCSV()">Download CSV</button>
+        <button class="b2" onclick="dlHTML()">Download HTML/PDF Report</button>
+    </div>
+</div>
+<script>
+const raw = ` + json + `;
+let rows = [];
+function start() {
+    raw.forEach(x => {
+        x.DeptClean = x.Dept ? x.Dept.trim().charAt(0).toUpperCase() + x.Dept.trim().slice(1).toLowerCase() : "General";
+    });
+    makeBoxes('dBox', [...new Set(raw.map(x => x.DeptClean))].sort(), 'dC', 'btnDept', 'Department');
+    makeBoxes('tBox', [...new Set(raw.map(x => x.Teacher))].sort(), 'tC', 'btnTeacher', 'Teacher');
+    makeBoxes('cBox', [...new Set(raw.map(x => x.Class))].sort(), 'cC', 'btnClass', 'Class');
+    makeBoxes('rBox', [...new Set(raw.map(x => x.Room ? x.Room.trim() : "N/A"))].sort(), 'rC', 'btnRoom', 'Room');
+    makeBoxes('sBox', [...new Set(raw.map(x => x.Slot))].sort(), 'sC', 'btnSlot', 'Time Slot');
+    filter();
+}
+function toggleMenu(id) {
+    let m = document.getElementById(id);
+    let isOpen = m.style.display === 'block';
+    document.querySelectorAll('.excel-menu').forEach(x => x.style.display = 'none');
+    m.style.display = isOpen ? 'none' : 'block';
+}
+window.onclick = function(e) {
+    if (!e.target.closest('.excel-dropdown')) {
+        document.querySelectorAll('.excel-menu').forEach(x => x.style.display = 'none');
+    }
+}
+function makeBoxes(id, items, cls, btnId, labelName) {
+    let box = document.getElementById(id);
+    let h = '<div><label><input type="checkbox" checked onchange="toggleAll(this, \\'' + cls + '\\', \\'' + btnId + '\\', \\'' + labelName + '\\')"> <b>Select All</b></label></div>';
+    items.forEach(i => { h += '<label><input type="checkbox" value="' + i + '" class="' + cls + '" checked onchange="filter(); updateButtonText(\\'' + cls + '\\', \\'' + btnId + '\\', \\'' + labelName + '\\')"> ' + i + '</label>'; });
+    box.innerHTML = h;
+    updateButtonText(cls, btnId, labelName);
+}
+function toggleAll(m, cls, btnId, labelName) {
+    document.querySelectorAll('.' + cls).forEach(c => {
+        if(c.offsetParent !== null) c.checked = m.checked;
+    });
+    filter();
+    updateButtonText(cls, btnId, labelName);
+}
+function filterSearch(input, cls) {
+    let term = input.value.toLowerCase();
+    let labels = input.nextElementSibling.querySelectorAll('label');
+    labels.forEach(l => {
+        let txt = l.innerText.toLowerCase();
+        l.style.display = txt.includes(term) ? 'block' : 'none';
+    });
+}
+function getVals(cls) {
+    let res = [];
+    document.querySelectorAll('.' + cls + ':checked').forEach(c => res.push(c.value));
+    return res;
+}
+function updateButtonText(cls, btnId, labelName) {
+    let checked = getVals(cls);
+    let total = document.querySelectorAll('.' + cls).length;
+    let btn = document.getElementById(btnId);
+    if(checked.length === total) {
+        btn.innerText = labelName + ": All ▼";
+    } else if(checked.length === 0) {
+        btn.innerText = labelName + ": None ▼";
+    } else if(checked.length === 1) {
+        btn.innerText = labelName + ": " + checked[0] + " ▼";
+    } else {
+        btn.innerText = labelName + ": " + checked.length + " selected ▼";
+    }
+}
+function filter() {
+    let sd = getVals('dC'), st = getVals('tC'), sc = getVals('cC'), sr = getVals('rC'), ss = getVals('sC');
+    let filtered = raw.filter(x => sd.includes(x.DeptClean) && st.includes(x.Teacher) && sc.includes(x.Class) && sr.includes(x.Room ? x.Room.trim() : "N/A") && ss.includes(x.Slot));
+    let map = {};
+    filtered.forEach(x => {
+        let k = x.DeptClean + "_" + x.Teacher + "_" + x.Sem + "_" + x.Year + "_" + x.Class + "_" + x.Room + "_" + x.Slot;
+        if(!map[k]) {
+            map[k] = {Dept: x.DeptClean, Teacher: x.Teacher, Sem: x.Sem, Year: x.Year, Class: x.Class, Room: x.Room, Slot: x.Slot, Mon: "- Free -", Tue: "- Free -", Wed: "- Free -", Thu: "- Free -", Fri: "- Free -", Sat: "- Free -"};
+        }
+        let dMap = {Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat'};
+        if(dMap[x.Day]) map[k][dMap[x.Day]] = x.Val;
+    });
+    rows = Object.values(map);
+    let tb = document.querySelector("#tbl tbody");
+    tb.innerHTML = "";
+    rows.forEach(r => {
+        tb.innerHTML += "<tr><td>" + r.Dept + "</td><td>" + r.Teacher + "</td><td>" + r.Sem + "</td><td>" + r.Year + "</td><td>" + r.Class + "</td><td>" + r.Room + "</td><td><b>" + r.Slot + "</b></td><td>" + r.Mon + "</td><td>" + r.Tue + "</td><td>" + r.Wed + "</td><td>" + r.Thu + "</td><td>" + r.Fri + "</td><td>" + r.Sat + "</td></tr>";
+    });
+}
+function dlCSV() {
+    if(!rows.length) { alert("No data"); return; }
+    let csv = "Dept,Teacher,Sem,Year,Class,Room,Slot,Mon,Tue,Wed,Thu,Fri,Sat\\n";
+    rows.forEach(r => {
+        csv += '"' + r.Dept + '","' + r.Teacher + '","' + r.Sem + '","' + r.Year + '","' + r.Class + '","' + r.Room + '","' + r.Slot + '","' + r.Mon + '","' + r.Tue + '","' + r.Wed + '","' + r.Thu + '","' + r.Fri + '","' + r.Sat + '"\\n';
+    });
+    let b = new Blob([csv], {type: 'text/csv'});
+    let a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'master.csv'; a.click();
+}
+function dlHTML() {
+    if(!rows.length) { alert("No data"); return; }
+    let th = document.getElementById('tbl').outerHTML;
+    let w = window.open('', '_blank');
+    w.document.write('<!DOCTYPE html><html><head><title>Report</title><style>table{width:100%;border-collapse:collapse;}th,td{border:1px solid #333;padding:6px;text-align:center;font-size:11px;}th{background:#0066cc;color:#fff;}</style></head><body><h2 style="text-align:center;">Master Timetable Report</h2>' + th + '</body></html>');
+    w.document.close();
+}
+window.onload = start;
+<\/script>
+</body>
+</html>`;
+        let blob = new Blob([code], {type: 'text/html'});
+        let link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'master_view.html';
+        link.click();
+    }
+</script>
+</body>
+</html>
